@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
@@ -58,6 +59,41 @@ func main() {
 	go func() {
 		for d := range msgs {
 			log.Println("Received message:", string(d.Body))
+			// Simulate processing time
+			time.Sleep(2 * time.Second)
+
+			retryCount := int32(0)
+			if val, ok := d.Headers["retry_count"]; ok {
+				retryCount = val.(int32)
+			}
+			// Simulate failure condition
+			if string(d.Body) == "fail" {
+
+				if retryCount < 3 {
+					log.Println("Processing failed. Retrying... Attempt:", retryCount+1)
+					if err := ch.Publish(
+						"",
+						q.Name,
+						false,
+						false,
+						amqp.Publishing{
+							ContentType: "text/plain",
+							Body:        d.Body,
+							Headers: amqp.Table{
+								"retry_count": retryCount + 1,
+							},
+						},
+					); err != nil {
+						log.Println("Failed to publish message for retry:", err)
+					}
+					d.Ack(false)
+					continue
+				}
+				log.Println("Max retries reached. Discarding message.")
+				d.Ack(false)
+				continue
+			}
+			log.Println("Processed successfully")
 			d.Ack(false)
 		}
 	}()

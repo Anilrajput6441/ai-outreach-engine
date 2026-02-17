@@ -31,7 +31,7 @@ func main() {
 		log.Fatal("Failed to declare queue:", err)
 	}
 
-	body := "Hello from Producer!"
+	body := "fail"
 
 	err = ch.Publish(
 		"",
@@ -41,6 +41,9 @@ func main() {
 		amqp.Publishing{
 			ContentType: "text/plain",
 			Body:        []byte(body),
+			Headers: amqp.Table{
+				"retry_count": int32(0),
+			},
 		},
 	)
 
