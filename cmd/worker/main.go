@@ -31,6 +31,15 @@ func main() {
 		log.Fatal("Queue declare failed:", err)
 	}
 
+	err = ch.Qos( //Fair dispatch---->>>	//With QoS: RabbitMQ sends only 1 at a time.
+		1, //Without QoS:RabbitMQ may dump 10 messages to Worker A
+		0,
+		false,
+	)
+	if err != nil {
+		log.Fatal("Failed to set QoS:", err)
+	}
+
 	msgs, err := ch.Consume(
 		q.Name,
 		"",
