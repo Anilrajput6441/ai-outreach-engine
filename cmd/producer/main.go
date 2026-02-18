@@ -20,7 +20,7 @@ func main() {
 	defer ch.Close()
 
 	q, err := ch.QueueDeclare(
-		"email_queue",
+		"hr_raw_queue",
 		true,
 		false,
 		false,
@@ -31,7 +31,7 @@ func main() {
 		log.Fatal("Failed to declare queue:", err)
 	}
 
-	body := "fail"
+	body := "Hello from Producer!"
 
 	err = ch.Publish(
 		"",
