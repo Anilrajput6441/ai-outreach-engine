@@ -48,7 +48,7 @@ func main() {
 	//------------------------------------------------------
 
 	retryQueue, err := ch.QueueDeclare(
-		"email_retry_queue",
+		"hr_retry_queue",
 		true,
 		false,
 		false,
