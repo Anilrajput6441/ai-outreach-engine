@@ -140,34 +140,7 @@ func main() {
 			if err != nil {
 				// Processing failed
 				log.Println("Error processing message:", err)
-
-				if retryCount < maxRetries {
-					// Retry: publish to retry queue with TTL
-					log.Println("Retrying... Attempt:", retryCount+1)
-					err := ch.Publish(
-						"",
-						retryQueue.Name,
-						false,
-						false,
-						amqp.Publishing{
-							ContentType: "text/plain",
-							Body:        d.Body,
-							Headers: amqp.Table{
-								"retry_count": retryCount + 1,
-							},
-						},
-					)
-					if err != nil {
-						log.Println("Failed to republish for retry:", err)
-						d.Nack(false, true) // ← REQUEUE in main queue, not DLQ
-					} else {
-						d.Ack(false) // remove from main queue and its already moved to retry queue
-					}
-				} else {
-					// Max retries exceeded: broker auto-sends to DLQ
-					log.Println("Max retries reached. Sending to DLQ.")
-					d.Nack(false, false) // Broker routes to DLQ automatically
-				}
+				handleRetry(ch, d, retryQueue.Name)
 			} else {
 				// Success
 				log.Println("Message processed successfully.")
@@ -199,7 +172,6 @@ func processMessage(ch *amqp.Channel, d amqp.Delivery) error {
 	emailData, err := json.Marshal(email)
 	if err != nil {
 		log.Println("Failed to marshal email:", err)
-		d.Nack(false, false)
 		return errors.New("failed to marshal email message")
 	}
 
@@ -246,5 +218,40 @@ func generateDummyEmail(hr models.HRMessage) models.EmailMessage {
 		CompanyName: hr.CompanyName,
 		Subject:     subject,
 		Body:        body,
+	}
+}
+
+func handleRetry(ch *amqp.Channel, d amqp.Delivery, retryQueueName string) {
+	retryCount := int32(0)
+	if val, ok := d.Headers["retry_count"]; ok {
+		retryCount = val.(int32)
+	}
+
+	if retryCount < maxRetries {
+		log.Println("retrying message. Attempt:", retryCount+1)
+		err := ch.Publish(
+			"",
+			retryQueueName,
+			false,
+			false,
+			amqp.Publishing{
+				ContentType: "application/json",
+				Body:        d.Body,
+				Headers: amqp.Table{
+					"retry_count": retryCount + 1,
+				},
+			},
+		)
+
+		if err != nil {
+			log.Println("Retry publish failed. Requeueing...")
+			d.Nack(false, true) // requeue to main queue
+			return
+		}
+		d.Ack(false)
+	} else {
+
+		log.Println("Max retries reached. Sending to DLQ.")
+		d.Nack(false, false) // broker sends to DLQ
 	}
 }
