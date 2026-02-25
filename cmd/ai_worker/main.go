@@ -1,9 +1,10 @@
 package main
 
 import (
+	"ai-outreach-engine/internal/models"
+	"encoding/json"
 	"errors"
 	"log"
-	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
@@ -27,8 +28,8 @@ func main() {
 	// --- main queue ---
 	//------------------------------------------------------
 
-	mainqueue, err := ch.QueueDeclare(
-		"email_queue",
+	hrRawQueue, err := ch.QueueDeclare(
+		"hr_raw_queue",
 		true,
 		false,
 		false,
@@ -54,7 +55,7 @@ func main() {
 		false,
 		amqp.Table{
 			"x-dead-letter-exchange":    "",
-			"x-dead-letter-routing-key": "email_queue",
+			"x-dead-letter-routing-key": "hr_raw_queue",
 			"x-message-ttl":             int32(5000), // 5 seconds
 		},
 	)
@@ -62,6 +63,21 @@ func main() {
 		log.Fatal("Retry Queue declare failed:", err)
 	}
 
+	//-------------------------------------------------------
+	// --- email_send_queue ---
+	//------------------------------------------------------
+	_, err = ch.QueueDeclare(
+		"email_send_queue",
+		true,
+		false,
+		false,
+		false,
+		nil,
+	)
+
+	if err != nil {
+		log.Fatal("email send queue failed to declare:", err)
+	}
 	//-------------------------------------------------------
 	// --- dead letter queue (broker-managed) ---
 	// Messages with max retries auto-route here via
@@ -93,7 +109,7 @@ func main() {
 	// --- Consuming ---
 	//------------------------------------------------------
 	msgs, err := ch.Consume(
-		mainqueue.Name,
+		hrRawQueue.Name,
 		"",
 		false, // manual ack
 		false,
@@ -105,7 +121,7 @@ func main() {
 		log.Fatal("Failed to register consumer:", err)
 	}
 
-	forever := make(chan bool)
+	forever := make(chan bool) // just to make it run forever ----->>>>>>>>>>>>>>>>>
 
 	go func() {
 		for d := range msgs {
@@ -119,7 +135,7 @@ func main() {
 
 			// Process message once
 			log.Println("Processing message... (Attempt:", retryCount+1, ")")
-			err := processMessage(d.Body)
+			err := processMessage(ch, d)
 
 			if err != nil {
 				// Processing failed
@@ -165,13 +181,46 @@ func main() {
 	<-forever
 }
 
-func processMessage(body []byte) error {
+func processMessage(ch *amqp.Channel, d amqp.Delivery) error {
 	// Simulate processing logic
-	time.Sleep(2 * time.Second)
+	var hr models.HRMessage
+	err := json.Unmarshal(d.Body, &hr)
+	if err != nil {
+		log.Println("Failed to unmarshal message:", err)
+		return errors.New("invalid message format")
+	}
 
-	// Example: messages with "error" text fail
-	if string(body) == "error" {
-		return errors.New("processing failed")
+	log.Println("Generating AI email for:", hr.CompanyName)
+
+	// 1️⃣ Call dummy AI generator
+	email := generateDummyEmail(hr)
+
+	// 2️⃣ Marshal EmailMessage
+	emailData, err := json.Marshal(email)
+	if err != nil {
+		log.Println("Failed to marshal email:", err)
+		d.Nack(false, false)
+		return errors.New("failed to marshal email message")
+	}
+
+	// 3️⃣ Push to email_send_queue
+	err = ch.Publish(
+		"",
+		"email_send_queue",
+		false,
+		false,
+		amqp.Publishing{
+			ContentType: "application/json",
+			Body:        emailData,
+			Headers: amqp.Table{
+				"retry_count": int32(0),
+			},
+		},
+	)
+
+	if err != nil {
+		log.Println("Failed to publish to email queue:", err)
+		return errors.New("failed to publish email message")
 	}
 
 	// Here you would:
@@ -181,4 +230,21 @@ func processMessage(body []byte) error {
 	// - Run AI logic
 
 	return nil
+}
+
+func generateDummyEmail(hr models.HRMessage) models.EmailMessage {
+	subject := "Excited to contribute to " + hr.CompanyName
+
+	body := "Hi " + hr.HRName + ",\n\n" +
+		"I came across " + hr.CompanyName + " and was impressed by your work.\n" +
+		"I believe my backend experience in Go and distributed systems would be valuable.\n\n" +
+		"Looking forward to connecting.\n\n" +
+		"Best,\nAnil"
+
+	return models.EmailMessage{
+		HREmail:     hr.HREmail,
+		CompanyName: hr.CompanyName,
+		Subject:     subject,
+		Body:        body,
+	}
 }

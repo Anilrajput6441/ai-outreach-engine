@@ -1,6 +1,8 @@
 package main
 
 import (
+	"ai-outreach-engine/internal/models"
+	"encoding/json"
 	"log"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -31,7 +33,17 @@ func main() {
 		log.Fatal("Failed to declare queue:", err)
 	}
 
-	body := "Hello from Producer!"
+	hr := models.HRMessage{
+		HRName:      "John",
+		HREmail:     "john@company.com",
+		CompanyName: "Acme Corp",
+		Website:     "https://acme.com",
+	}
+
+	data, err := json.Marshal(hr)
+	if err != nil {
+		log.Fatal("JSON marshal failed:", err)
+	}
 
 	err = ch.Publish(
 		"",
@@ -40,7 +52,7 @@ func main() {
 		false,
 		amqp.Publishing{
 			ContentType: "text/plain",
-			Body:        []byte(body),
+			Body:        data,
 			Headers: amqp.Table{
 				"retry_count": int32(0),
 			},
@@ -51,5 +63,5 @@ func main() {
 		log.Fatal("Failed to publish message:", err)
 	}
 
-	log.Println("Message sent:", body)
+	log.Println("Message sent:", data)
 }
