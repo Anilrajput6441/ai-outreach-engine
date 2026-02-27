@@ -27,7 +27,10 @@ func main() {
 		false,
 		false,
 		false,
-		nil,
+		amqp.Table{
+			"x-dead-letter-exchange":    "",
+			"x-dead-letter-routing-key": "email_dlq",
+		},
 	)
 	if err != nil {
 		log.Fatal("Failed to declare queue:", err)
