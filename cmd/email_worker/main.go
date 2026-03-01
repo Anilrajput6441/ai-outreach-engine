@@ -14,6 +14,25 @@ import (
 
 // maxRetries := 3
 func main() {
+
+	//-------------------------------------------------------
+	// --- Redis Connection ---
+	//-------------------------------------------------------
+
+	ctx := context.Background()
+
+	rdb := redis.NewClient(&redis.Options{
+		Addr: "localhost:6379",
+	})
+
+	if err := rdb.Ping(ctx).Err(); err != nil {
+		log.Fatal("Redis connection failed:", err)
+	}
+	defer rdb.Close()
+
+	//-------------------------------------------------------
+	// --- RabbitMq Connection ---
+	//-------------------------------------------------------
 	conn, err := amqp.Dial("amqp://guest:guest@localhost:5672/")
 	if err != nil {
 		log.Println("Failed to connect to RabbitMQ:", err)
@@ -119,12 +138,24 @@ func main() {
 
 			<-rateLimiter.C // rate limit enforced here
 
-			err := processEmail(d)
+			err := processEmail(d, ctx, rdb)
 
 			if err != nil {
-				log.Println("Email send failed:", err)
-				handleRetry(ch, d, retryQueue.Name)
+				switch err.Error() {
+				case "daily limit reached":
+					log.Println(err)
+					d.Nack(false, true)          // requeue for tomorrow
+					time.Sleep(30 * time.Minute) // back‑off
+				default:
+					log.Println("Email send failed:", err)
+					handleRetry(ch, d, retryQueue.Name)
+				}
+				continue
 			} else {
+				err = incrementDailyEmailCount(ctx, rdb)
+				if err != nil {
+					log.Println("Failed to update Redis counter:", err)
+				}
 				d.Ack(false)
 			}
 		}
@@ -137,7 +168,17 @@ func main() {
 // Business Logic (NO ACK/NACK here)
 // -------------------------------------------------------
 
-func processEmail(d amqp.Delivery) error {
+func processEmail(d amqp.Delivery, ctx context.Context, rdb *redis.Client) error {
+
+	allowed, Reederr := canSendEmail(ctx, rdb)
+	if Reederr != nil {
+		return Reederr
+	}
+	if !allowed {
+		return errors.New("daily limit reached")
+	}
+	// Everything looks good, send Email
+
 	var email models.EmailMessage
 
 	err := json.Unmarshal(d.Body, &email)
@@ -202,7 +243,7 @@ func handleRetry(ch *amqp.Channel, d amqp.Delivery, retryQueueName string) {
 }
 
 // -------------------------------------------------------
-// canSendEmail
+// Redis Helpers Validation and Counter Increment
 // -------------------------------------------------------
 
 func canSendEmail(ctx context.Context, rdb *redis.Client) (bool, error) {
@@ -222,4 +263,15 @@ func canSendEmail(ctx context.Context, rdb *redis.Client) (bool, error) {
 	}
 	return true, nil
 
+}
+
+func incrementDailyEmailCount(ctx context.Context, rdb *redis.Client) error {
+	today := time.Now().Format("2026-01-02")
+	key := "email_sent_count:" + today
+
+	pipe := rdb.TxPipeline() //TxPipeline acts like Pipeline, but wraps queued commands with MULTI/EXEC.
+	pipe.Incr(ctx, key)
+	pipe.Expire(ctx, key, 24*time.Hour)
+	_, err := pipe.Exec(ctx)
+	return err
 }
