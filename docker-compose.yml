@@ -17,3 +17,9 @@ services:
     ports:
       - "5672:5672"
       - "15672:15672"
+
+  redis:
+    image: redis:7
+    container_name: outreach_redis
+    ports:
+      - "6379:6379"

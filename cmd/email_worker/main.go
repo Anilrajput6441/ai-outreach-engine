@@ -2,12 +2,14 @@ package main
 
 import (
 	"ai-outreach-engine/internal/models"
+	"context"
 	"encoding/json"
 	"errors"
 	"log"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
+	"github.com/redis/go-redis/v9"
 )
 
 // maxRetries := 3
@@ -197,4 +199,27 @@ func handleRetry(ch *amqp.Channel, d amqp.Delivery, retryQueueName string) {
 		log.Println("Max retries reached. Sending to DLQ.")
 		d.Nack(false, false)
 	}
+}
+
+// -------------------------------------------------------
+// canSendEmail
+// -------------------------------------------------------
+
+func canSendEmail(ctx context.Context, rdb *redis.Client) (bool, error) {
+	today := time.Now().Format("2006-01-02")
+	key := "email_sent_count:" + today
+
+	count, err := rdb.Get(ctx, key).Int()
+	if err == redis.Nil {
+		return true, nil // no emails sent today yet
+	}
+	if err != nil {
+		return false, err
+	}
+
+	if count >= 20 {
+		return false, nil // max emails sent for today
+	}
+	return true, nil
+
 }
