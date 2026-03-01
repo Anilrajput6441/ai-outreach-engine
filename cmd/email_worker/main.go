@@ -1,8 +1,10 @@
 package main
 
 import (
+	"ai-outreach-engine/internal/db"
 	"ai-outreach-engine/internal/models"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"log"
@@ -14,6 +16,13 @@ import (
 
 // maxRetries := 3
 func main() {
+
+	//-------------------------------------------------------
+	// --- Postgres DB Connection ---
+	//-------------------------------------------------------
+
+	dbConn := db.ConnectPostgres()
+	defer dbConn.Close()
 
 	//-------------------------------------------------------
 	// --- Redis Connection ---
@@ -138,7 +147,7 @@ func main() {
 
 			<-rateLimiter.C // rate limit enforced here
 
-			err := processEmail(d, ctx, rdb)
+			err := processEmail(d, ctx, rdb, dbConn)
 
 			if err != nil {
 				switch err.Error() {
@@ -148,7 +157,7 @@ func main() {
 					time.Sleep(30 * time.Minute) // back‑off
 				default:
 					log.Println("Email send failed:", err)
-					handleRetry(ch, d, retryQueue.Name)
+					handleRetry(ch, d, retryQueue.Name, dbConn)
 				}
 				continue
 			} else {
@@ -168,7 +177,7 @@ func main() {
 // Business Logic (NO ACK/NACK here)
 // -------------------------------------------------------
 
-func processEmail(d amqp.Delivery, ctx context.Context, rdb *redis.Client) error {
+func processEmail(d amqp.Delivery, ctx context.Context, rdb *redis.Client, dbConn *sql.DB) error {
 
 	allowed, Reederr := canSendEmail(ctx, rdb)
 	if Reederr != nil {
@@ -197,6 +206,17 @@ func processEmail(d amqp.Delivery, ctx context.Context, rdb *redis.Client) error
 	if email.CompanyName == "fail" {
 		return errors.New("SMTP error")
 	}
+	//update DB status to sent
+	_, err = dbConn.Exec(
+		`UPDATE outreach_emails 
+	 SET status = 'sent', updated_at = NOW() 
+	 WHERE hr_email = $1`,
+		email.HREmail,
+	)
+	if err != nil {
+		log.Println("DB update failed:", err)
+	}
+	//We do NOT fail the message if DB update fails as email is already sent and DB is observability, not delivery
 
 	log.Println("Email sent successfully to:", email.HREmail)
 	return nil
@@ -206,7 +226,7 @@ func processEmail(d amqp.Delivery, ctx context.Context, rdb *redis.Client) error
 // Retry Handler
 // -------------------------------------------------------
 
-func handleRetry(ch *amqp.Channel, d amqp.Delivery, retryQueueName string) {
+func handleRetry(ch *amqp.Channel, d amqp.Delivery, retryQueueName string, dbConn *sql.DB) {
 
 	retryCount := int32(0)
 	if val, ok := d.Headers["retry_count"]; ok {
@@ -238,6 +258,21 @@ func handleRetry(ch *amqp.Channel, d amqp.Delivery, retryQueueName string) {
 		d.Ack(false)
 	} else {
 		log.Println("Max retries reached. Sending to DLQ.")
+		// update DB to mark as failed before sending to DLQ
+		var email models.EmailMessage
+		if err := json.Unmarshal(d.Body, &email); err == nil {
+			_, dbErr := dbConn.Exec(
+				`UPDATE outreach_emails 
+				 SET status = 'failed', error_message = $1, updated_at = NOW() 
+				 WHERE hr_email = $2`,
+				"Max retries exceeded", email.HREmail,
+			)
+			if dbErr != nil {
+				log.Println("Failed to update DB for failed email:", dbErr)
+			}
+		} else {
+			log.Println("Failed to unmarshal email for DLQ DB update:", err)
+		}
 		d.Nack(false, false)
 	}
 }
