@@ -3,6 +3,8 @@ package db
 import (
 	"database/sql"
 	"log"
+
+	_ "github.com/lib/pq"
 )
 
 func ConnectPostgres() *sql.DB {

@@ -1,7 +1,9 @@
 package main
 
 import (
+	"ai-outreach-engine/internal/db"
 	"ai-outreach-engine/internal/models"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"log"
@@ -12,6 +14,17 @@ import (
 const maxRetries = 3
 
 func main() {
+
+	//-------------------------------------------------------
+	// --- Postgres DB Connection ---
+	//-------------------------------------------------------
+
+	dbConn := db.ConnectPostgres()
+	defer dbConn.Close()
+
+	//-------------------------------------------------------
+	// --- RabbitMQ Connection ---
+	//-------------------------------------------------------
 	conn, err := amqp.Dial("amqp://guest:guest@localhost:5672/")
 	if err != nil {
 		log.Fatal("Failed to connect:", err)
@@ -135,7 +148,7 @@ func main() {
 
 			// Process message once
 			log.Println("Processing message... (Attempt:", retryCount+1, ")")
-			err := processMessage(ch, d)
+			err := processMessage(ch, d, dbConn)
 
 			if err != nil {
 				// Processing failed
@@ -154,7 +167,7 @@ func main() {
 	<-forever
 }
 
-func processMessage(ch *amqp.Channel, d amqp.Delivery) error {
+func processMessage(ch *amqp.Channel, d amqp.Delivery, dbConn *sql.DB) error {
 	// Simulate processing logic
 	var hr models.HRMessage
 	err := json.Unmarshal(d.Body, &hr)
@@ -167,6 +180,17 @@ func processMessage(ch *amqp.Channel, d amqp.Delivery) error {
 
 	// 1️⃣ Call dummy AI generator
 	email := generateDummyEmail(hr)
+
+	//update db status to 'ai_generated'
+	_, err = dbConn.Exec(
+		`UPDATE outreach_emails 
+	 SET status = 'ai_generated', updated_at = NOW() 
+	 WHERE hr_email = $1`,
+		hr.HREmail,
+	)
+	if err != nil {
+		log.Println("DB update failed:", err)
+	}
 
 	// 2️⃣ Marshal EmailMessage
 	emailData, err := json.Marshal(email)

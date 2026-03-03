@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"log"
 
+	_ "github.com/lib/pq"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
