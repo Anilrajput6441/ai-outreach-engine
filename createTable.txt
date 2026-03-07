@@ -1,0 +1,4 @@
+psql "postgres://admin:admin@localhost:5432/
+outreach?sslmode=disable" -c "
+dquote>CREATE TABLE IF NOT EXISTS outreach_emails (id SERIAL PRIMARY KEY, company_name VARCHAR(255) NOT NULL, hr_email VARCHAR(255) UNIQUE NOT NULL, status VARCHAR(50) NOT NULL DEFAULT 'pending', ai_content TEXT, error_message TEXT, created_at TIMESTAMP DEFAULT NOW(), updated_at TIMESTAMP DEFAULT NOW());
+CREATE TABLE

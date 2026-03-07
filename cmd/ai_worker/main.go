@@ -1,6 +1,7 @@
 package main
 
 import (
+	"ai-outreach-engine/internal/ai"
 	"ai-outreach-engine/internal/db"
 	"ai-outreach-engine/internal/models"
 	"database/sql"
@@ -178,7 +179,18 @@ func processMessage(ch *amqp.Channel, d amqp.Delivery, dbConn *sql.DB) error {
 
 	log.Println("Generating AI email for:", hr.CompanyName)
 
-	// 1️⃣ Call dummy AI generator
+	// Call dummy AI generator
+	prompt := "Write a short cold email to HR named " + hr.HRName + " from company " + hr.CompanyName
+
+	emailText, err := ai.GenerateEmail(prompt)
+
+	if err != nil {
+		log.Println("AI error:", err)
+		return err
+	}
+
+	log.Println("Generated email:", emailText)
+
 	email := generateDummyEmail(hr)
 
 	//update db status to 'ai_generated'
@@ -192,14 +204,14 @@ func processMessage(ch *amqp.Channel, d amqp.Delivery, dbConn *sql.DB) error {
 		log.Println("DB update failed:", err)
 	}
 
-	// 2️⃣ Marshal EmailMessage
+	//  Marshal EmailMessage
 	emailData, err := json.Marshal(email)
 	if err != nil {
 		log.Println("Failed to marshal email:", err)
 		return errors.New("failed to marshal email message")
 	}
 
-	// 3️⃣ Push to email_send_queue
+	// Push to email_send_queue
 	err = ch.Publish(
 		"",
 		"email_send_queue",

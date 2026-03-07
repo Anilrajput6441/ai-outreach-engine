@@ -179,9 +179,9 @@ func main() {
 
 func processEmail(d amqp.Delivery, ctx context.Context, rdb *redis.Client, dbConn *sql.DB) error {
 
-	allowed, Reederr := canSendEmail(ctx, rdb)
-	if Reederr != nil {
-		return Reederr
+	allowed, Readerr := canSendEmail(ctx, rdb)
+	if Readerr != nil {
+		return Readerr
 	}
 	if !allowed {
 		return errors.New("daily limit reached")
