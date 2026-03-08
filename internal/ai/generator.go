@@ -4,51 +4,45 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"os"
+	"time"
 
-	openai "github.com/sashabaranov/go-openai"
+	"google.golang.org/genai"
 )
 
 func GenerateEmail(prompt string) (string, error) {
 	log.Println("recieved prompt", prompt)
-
-	apiKey := os.Getenv("OPENROUTER_API_KEY")
-	if apiKey == "" {
-		return "", fmt.Errorf("OPENROUTER_API_KEY environment variable is not set")
+	ctx := context.Background()
+	// The client gets the API key from the environment variable `GEMINI_API_KEY`.
+	client, err := genai.NewClient(ctx, nil)
+	if err != nil {
+		log.Fatal(err)
 	}
 
-	// 2. Configure for OpenRouter
-	config := openai.DefaultConfig(apiKey)
-	config.BaseURL = "https://openrouter.ai"
+	// ---- System prompt that tells the model what to do ----
+	systemPrompt := `You are a professional email copywriter. 
+Write a concise cold email to HR. 
+Follow this exact structure:
+Subject: <subject line>
+Greeting: <e.g., Dear Robert,>
+Body: <2 or 3 short sentences that introduce you and your value proposition>
+Closing: <e.g., Best regards, Your Name> 
+Do NOT include any extra text or explanations.`
 
-	client := openai.NewClientWithConfig(config)
+	// Combine system + user prompt
+	fullPrompt := systemPrompt + "\n\n" + prompt
+	fmt.Print(fullPrompt)
+	time.Sleep(5 * time.Second)
 
-	// 3. Make the Request
-	resp, err := client.CreateChatCompletion(
-		context.Background(),
-		openai.ChatCompletionRequest{
-			// Using a reliable free model
-			Model: "google/gemini-2.0-flash-lite-preview-02-05:free",
-			Messages: []openai.ChatCompletionMessage{
-				{
-					Role:    openai.ChatMessageRoleUser,
-					Content: prompt,
-				},
-			},
-		},
+	result, err := client.Models.GenerateContent(
+		ctx,
+		"gemini-2.5-flash",
+		genai.Text(fullPrompt),
+		nil,
 	)
-
 	if err != nil {
-		return "", fmt.Errorf("AI error: %v", err)
+		log.Fatal(err)
 	}
+	log.Println(result.Text())
+	return result.Text(), nil
 
-	if len(resp.Choices) == 0 {
-		return "", fmt.Errorf("no response choices returned from AI")
-	}
-
-	if err != nil {
-		return "", err
-	}
-
-	return resp.Choices[0].Message.Content, nil
 }
