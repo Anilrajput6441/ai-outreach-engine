@@ -2,6 +2,7 @@ package main
 
 import (
 	"ai-outreach-engine/internal/db"
+	"ai-outreach-engine/internal/mailer"
 	"ai-outreach-engine/internal/models"
 	"context"
 	"database/sql"
@@ -65,10 +66,7 @@ func main() {
 		false,
 		false,
 		false,
-		amqp.Table{
-			"x-dead-letter-exchange":    "",
-			"x-dead-letter-routing-key": "email_dlq",
-		},
+		nil,
 	)
 	if err != nil {
 		log.Fatal("Failed to declare email_send_queue:", err)
@@ -199,13 +197,20 @@ func processEmail(d amqp.Delivery, ctx context.Context, rdb *redis.Client, dbCon
 	log.Println("Sending email to:", email.HREmail)
 	log.Println("Subject:", email.Subject)
 
-	// Simulate email sending delay
-	time.Sleep(2 * time.Second)
-
-	// Simulate failure (for testing retry)
-	if email.CompanyName == "fail" {
-		return errors.New("SMTP error")
+	//send mail
+	cfg := mailer.Config{
+		Host:     "smtp.gmail.com",
+		Port:     "587",
+		Username: "anilrajput6441@gmail.com",
+		Password: "kuwo dmbr lkcv wyvy",
 	}
+
+	err = mailer.SendEmail(cfg, email.HREmail, email.Subject, email.Body)
+	if err != nil {
+		log.Println("SMTP error:", err)
+		return err
+	}
+
 	//update DB status to sent
 	_, err = dbConn.Exec(
 		`UPDATE outreach_emails 
