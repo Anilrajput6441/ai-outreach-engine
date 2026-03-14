@@ -2,9 +2,7 @@ package ai
 
 import (
 	"context"
-	"fmt"
 	"log"
-	"time"
 
 	"google.golang.org/genai"
 )
@@ -30,8 +28,6 @@ Do NOT include any extra text or explanations.`
 
 	// Combine system + user prompt
 	fullPrompt := systemPrompt + "\n\n" + prompt
-	fmt.Print(fullPrompt)
-	time.Sleep(5 * time.Second)
 
 	result, err := client.Models.GenerateContent(
 		ctx,
@@ -42,7 +38,6 @@ Do NOT include any extra text or explanations.`
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Println(result.Text())
 	return result.Text(), nil
 
 }

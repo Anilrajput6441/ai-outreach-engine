@@ -7,7 +7,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"html"
 	"log"
+	"strings"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
@@ -179,29 +181,36 @@ func processMessage(ch *amqp.Channel, d amqp.Delivery, dbConn *sql.DB) error {
 
 	log.Println("Generating AI email for:", hr.CompanyName)
 
-	// Call dummy AI generator
 	prompt := "Write a short cold email to HR named " + hr.HRName + " from company " + hr.CompanyName
 
 	emailText, err := ai.GenerateEmail(prompt)
-
 	if err != nil {
 		log.Println("AI error:", err)
 		return err
 	}
 
-	log.Println("Generated email:", emailText)
+	log.Printf("RAW AI RESPONSE:\n%s\n", emailText)
 
-	email := generateDummyEmail(hr)
+	email, err := parseEmailFromAI(emailText, hr)
+	if err != nil {
+		log.Println("Failed to parse AI email:", err)
+		return err
+	}
+	log.Println("final email", email)
 
 	//update db status to 'ai_generated'
-	_, err = dbConn.Exec(
+	result, err := dbConn.Exec(
 		`UPDATE outreach_emails 
-	 SET status = 'ai_generated', updated_at = NOW() 
+	 SET status = 'ai_generated', ai_content = $2, updated_at = NOW() 
 	 WHERE hr_email = $1`,
 		hr.HREmail,
+		email.Subject+"\n\n"+email.Body,
 	)
 	if err != nil {
 		log.Println("DB update failed:", err)
+	} else {
+		rows, _ := result.RowsAffected()
+		log.Println("DB rows affected:", rows)
 	}
 
 	//  Marshal EmailMessage
@@ -231,30 +240,65 @@ func processMessage(ch *amqp.Channel, d amqp.Delivery, dbConn *sql.DB) error {
 		return errors.New("failed to publish email message")
 	}
 
-	// Here you would:
-	// - Call external API
-	// - Send email
-	// - Save to DB
-	// - Run AI logic
-
 	return nil
 }
 
-func generateDummyEmail(hr models.HRMessage) models.EmailMessage {
-	subject := "Excited to contribute to " + hr.CompanyName
+func parseEmailFromAI(emailText string, hr models.HRMessage) (models.EmailMessage, error) {
+	sections := map[string]string{}
+	currentKey := ""
+	var currentVal strings.Builder
 
-	body := "Hi " + hr.HRName + ",\n\n" +
-		"I came across " + hr.CompanyName + " and was impressed by your work.\n" +
-		"I believe my backend experience in Go and distributed systems would be valuable.\n\n" +
-		"Looking forward to connecting.\n\n" +
-		"Best,\nAnil"
+	for _, line := range strings.Split(emailText, "\n") {
+		lower := strings.ToLower(line)
+		switch {
+		case strings.HasPrefix(lower, "subject:"):
+			currentKey = "subject"
+			currentVal.Reset()
+			currentVal.WriteString(strings.TrimSpace(line[len("subject:"):]))
+		case strings.HasPrefix(lower, "greeting:"):
+			sections[currentKey] = currentVal.String()
+			currentKey = "greeting"
+			currentVal.Reset()
+			currentVal.WriteString(strings.TrimSpace(line[len("greeting:"):]))
+		case strings.HasPrefix(lower, "body:"):
+			sections[currentKey] = currentVal.String()
+			currentKey = "body"
+			currentVal.Reset()
+			currentVal.WriteString(strings.TrimSpace(line[len("body:"):]))
+		case strings.HasPrefix(lower, "closing:"):
+			sections[currentKey] = currentVal.String()
+			currentKey = "closing"
+			currentVal.Reset()
+			currentVal.WriteString(strings.TrimSpace(line[len("closing:"):]))
+		default:
+			if currentKey != "" && strings.TrimSpace(line) != "" {
+				currentVal.WriteString("\n" + strings.TrimSpace(line))
+			}
+		}
+	}
+	if currentKey != "" {
+		sections[currentKey] = currentVal.String()
+	}
+
+	subject := html.UnescapeString(sections["subject"])
+	greeting := html.UnescapeString(sections["greeting"])
+	body := html.UnescapeString(sections["body"])
+	closing := html.UnescapeString(sections["closing"])
+
+	log.Printf("Parsed sections -> subject:[%s] greeting:[%s] body:[%s] closing:[%s]", subject, greeting, body, closing)
+
+	if subject == "" || body == "" {
+		return models.EmailMessage{}, errors.New("failed to parse subject or body from AI response")
+	}
+
+	fullBody := greeting + "\n\n" + body + "\n\n" + closing
 
 	return models.EmailMessage{
 		HREmail:     hr.HREmail,
 		CompanyName: hr.CompanyName,
 		Subject:     subject,
-		Body:        body,
-	}
+		Body:        strings.TrimSpace(fullBody),
+	}, nil
 }
 
 func handleRetry(ch *amqp.Channel, d amqp.Delivery, retryQueueName string) {
